@@ -1,0 +1,3 @@
+This is just a few Nagios plugins HubSpot has either modified or written from scratch.  Anywhere we copied or forked, author attribution should be noted, if not, contact us and we'll fix it.
+
+* check_json - A simple JSON web service checker.  Supports string matching for OK, WARNING, and CRITICAL values.
