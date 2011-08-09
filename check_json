@@ -1,0 +1,145 @@
+#! /usr/bin/env python
+
+"""
+Nagios plugin to check a value returned from a uri in json format.
+
+Author: Stephen Huenneke <shuenneke@hubspot.com>
+
+Copyright (c) 2011 HubSpot Inc. All rights reserved.
+
+Download the latest version at https://github.com/HubSpot/HubSpot-Nagios-Plugins
+
+Originally by Peter Kropf, hosted at https://github.com/pkropf/Nagio-Plugins/tree/master/json
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+"""
+
+
+import urllib2
+import signal
+import simplejson
+import sys
+from optparse import OptionParser
+
+
+prefix = 'JSON'
+
+class nagios:
+    ok       = (0, 'OK')
+    warning  = (1, 'WARNING')
+    critical = (2, 'CRITICAL')
+    unknown  = (3, 'UNKNOWN')
+
+class TimeoutException(Exception):
+    pass
+
+def raise_timeout(signum, frame):
+    raise TimeoutException("Timeout was hit.")
+
+signal.signal(signal.SIGALRM, raise_timeout)
+
+def exit(status, message):
+    print prefix + ' ' + status[1] + ' - ' + message
+    sys.exit(status[0])
+
+
+parser = OptionParser(usage='usage: %prog field_name expected_value uri')
+parser.add_option("--ssl",
+                  metavar="SSL",
+                  help="Use SSL as the protocol",
+                  dest="use_ssl",
+                  action="store_true", 
+                  default=False)
+parser.add_option("-H", "--hostname",
+                  metavar="HOSTNAME",
+                  help="The hostname to query against",
+                  dest="hostname",
+                  default=None)
+parser.add_option("-p", "--port",
+                  metavar="PORT",
+                  help="The port to use in the URI",
+                  dest="port",
+                  default="80")
+parser.add_option("-u", "--path",
+                  metavar="PATH",
+                  help="The path to query",
+                  dest="path",
+                  default=None)
+parser.add_option("-f", "--field",
+                  metavar="FIELDNAME",
+                  help="The field to match against",
+                  dest="field_name",
+                  default=None)
+parser.add_option("-v", "--ok",
+                  metavar="PATH",
+                  help="The 'ok' field value to match",
+                  dest="ok_field_value",
+                  default=None)
+parser.add_option("-w", "--warning",
+                  metavar="PATH",
+                  help="The 'warning' field value to match",
+                  dest="warn_field_value",
+                  default=None)
+parser.add_option("-c", "--critical",
+                  metavar="PATH",
+                  help="The 'warning' field value to match",
+                  dest="crit_field_value",
+                  default=None)
+parser.add_option("-t", "--timeout",
+                  metavar="TIMEOUTSECS",
+                  help="The maximum number of secs to wait for a response.",
+                  dest="timeout",
+                  default=10)
+options, args = parser.parse_args()
+
+
+if options.hostname is None:
+    exit(nagios.unknown, 'missing hostname argument')
+
+if options.path is None:
+    exit(nagios.unknown, 'missing uri path argument')
+
+if options.field_name is None:
+    exit(nagios.unknown, 'missing field_name argument')
+
+uri = "%s://%s:%s%s" % (("https" if options.use_ssl else "http"), options.hostname, options.port, options.path)
+
+try:
+    signal.alarm(int(options.timeout)) # raise alarm in X seconds, this is a hack for python 2.5's lack of support for timeout in urlopen :(
+    j = simplejson.load(urllib2.urlopen(uri))
+except urllib2.HTTPError, ex:
+    exit(nagios.unknown, 'unable to retrieve url: "%s"' % uri)
+except urllib2.URLError, ex:
+    exit(nagios.critical, 'unable to retrieve url: "%s"' % uri)
+except TimeoutException, ex:
+    exit(nagios.warning, 'timeout in %s seconds trying to retrieve url: "%s"' % (options.timeout, uri))
+finally:
+    signal.alarm(0) # disable alarm
+
+if options.field_name not in j:
+    exit(nagios.unknown, 'field: ' + field + ' not present')
+
+if options.crit_field_value is not None and j[options.field_name] == options.crit_field_value:
+    exit(nagios.critical, j[options.field_name] + ' == ' + options.crit_field_value)
+elif options.warn_field_value is not None and j[options.field_name] == options.warn_field_value:
+    exit(nagios.warning, j[options.field_name] + ' == ' + options.warn_field_value)
+elif options.ok_field_value is not None and j[options.field_name] == options.ok_field_value:
+    exit(nagios.ok, j[options.field_name] + ' == ' + options.ok_field_value)
+
+exit(nagios.unknown, 'field: ' + options.field_name + ' has no value to match against.')
