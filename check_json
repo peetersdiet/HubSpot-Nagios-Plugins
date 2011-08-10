@@ -123,17 +123,29 @@ if not options.use_ssl:
     uri = uri.replace("https","http")
 
 
+exit_code = None
+exit_message = None
+
+
+#Nested try/except inside a try/finally for python 2.4 compatibility, I'm sorry.
 try:
-    signal.alarm(int(options.timeout)) # raise alarm in X seconds, this is a hack for python 2.5's lack of support for timeout in urlopen :(
-    j = simplejson.load(urllib2.urlopen(uri))
-except urllib2.HTTPError, ex:
-    exit(nagios.unknown, 'unable to retrieve url: "%s"' % uri)
-except urllib2.URLError, ex:
-    exit(nagios.critical, 'unable to retrieve url: "%s"' % uri)
-except TimeoutException, ex:
-    exit(nagios.warning, 'timeout in %s seconds trying to retrieve url: "%s"' % (options.timeout, uri))
+    try:
+        signal.alarm(int(options.timeout)) # raise alarm in X seconds, this is a hack for python 2.5's lack of support for timeout in urlopen :(
+        j = simplejson.load(urllib2.urlopen(uri))
+    except urllib2.HTTPError, ex:
+        exit_code = nagios.unknown
+        exit_message = 'unable to retrieve url: "%s"' % uri
+    except urllib2.URLError, ex:
+        exit_code = nagios.critical
+        exit_message = 'unable to retrieve url: "%s"' % uri
+    except TimeoutException, ex:
+        exit_code = nagios.warning
+        exit_message = 'timeout in %s seconds trying to retrieve url: "%s"' % (options.timeout, uri)
 finally:
     signal.alarm(0) # disable alarm
+    
+if exit_code is not None:
+    exit(exit_code, exit_message)
 
 if options.field_name not in j:
     exit(nagios.unknown, 'field: ' + field + ' not present')
