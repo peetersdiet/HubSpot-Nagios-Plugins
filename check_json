@@ -118,7 +118,10 @@ if options.path is None:
 if options.field_name is None:
     exit(nagios.unknown, 'missing field_name argument')
 
-uri = "%s://%s:%s%s" % (("https" if options.use_ssl else "http"), options.hostname, options.port, options.path)
+uri = "https://%s:%s%s" % (options.hostname, options.port, options.path)
+if not options.use_ssl:
+    uri = uri.replace("https","http")
+
 
 try:
     signal.alarm(int(options.timeout)) # raise alarm in X seconds, this is a hack for python 2.5's lack of support for timeout in urlopen :(
