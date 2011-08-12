@@ -35,6 +35,7 @@ import urllib2
 import signal
 import simplejson
 import sys
+import time
 from optparse import OptionParser
 
 
@@ -58,6 +59,105 @@ def exit(status, message):
     print prefix + ' ' + status[1] + ' - ' + message
     sys.exit(status[0])
 
+"""
+A simple string matcher, falls through from crit -> warn -> ok -> unknown
+"""
+def check_string(options, j):
+    print "Checking string..."
+    if options.crit_field_value is not None and j[options.field_name] == options.crit_field_value:
+        exit(nagios.critical, "%s == %s" % (j[options.field_name], options.crit_field_value))
+    elif options.warn_field_value is not None and j[options.field_name] == options.warn_field_value:
+        exit(nagios.warning, "%s == %s" % (j[options.field_name], options.warn_field_value))
+    elif options.ok_field_value is not None and j[options.field_name] == options.ok_field_value:
+        exit(nagios.ok, "%s == %s" % (j[options.field_name], options.ok_field_value))
+    exit(nagios.unknown, "Field: %s has no value to match against." % options.field_name)
+
+"""
+A boolean parser/checker, fails with unknown when either the value to
+check or the returned value is not a boolean.  Otherwise, returns ok
+or critical, no warn mode.
+"""
+def check_boolean(options, j):
+    print "Checking boolean..."
+    if options.ok_field_value is None:
+        exit(nagios.unknown,  "No value to check against for %s." % options.field_name)
+    if str(options.ok_field_value).strip().lower() not in ["false","true"]:
+        exit(nagios.unknown,  "'%s' is not a boolean, please only use 'true' or 'false' to check against booleans." % options.ok_field_value)
+
+    ok_value = str(options.ok_field_value).strip().lower()
+    field_value = str(j[options.field_name]).strip().lower()
+    if field_value not in ["false","true"]:
+        exit(nagios.unknown, "Returned value '%s' is not a boolean, can't match." % j[options.field_name])
+    
+    if field_value == ok_value:
+        exit(nagios.ok, "%s == %s" % (field_value, ok_value))
+    else:
+        exit(nagios.critical, "%s != %s" % (field_value, ok_value))
+
+"""
+A threshold checker if any of the values are non-numeric, we return
+unknown.  Otherwise, we fall through from crit -> warn -> ok depending
+on whether the returned value is greater than or equal to the critical
+value or the warn value or less than both.
+"""
+def check_threshold(options, j):
+    if not str(j[options.field_name]).isdigit():
+        exit(nagios.unknown, "Field '%s' has non-numeric value '%s'" % (options.field_name, j[options.field_name]))
+
+    if (options.crit_field_value is None or not options.crit_field_value.isdigit()) \
+            and (options.warn_field_value is None or not options.warn_field_value.isdigit()):
+        exit(nagios.unknown, "Non-numeric or empty values entered for critical='%s' and warn='%s' checks, can't do threshold check." % (options.crit_field_value, options.warn_field_value))
+
+    if float(options.crit_field_value) < float(options.warn_field_value):
+        exit(nagios.unknown, "Critical threshold is less than warning threshold, can't compare properly.")
+
+    print "Checking threshold..."
+    if options.crit_field_value is not None \
+            and options.crit_field_value.isdigit() \
+            and float(j[options.field_name]) >= float(options.crit_field_value):
+        exit(nagios.critical, "%s >= %s" % (j[options.field_name], options.crit_field_value))
+    elif options.warn_field_value is not None \
+            and options.warn_field_value.isdigit() \
+            and float(j[options.field_name]) >= float(options.warn_field_value):
+        exit(nagios.warning, "%s >= %s" % (j[options.field_name], options.warn_field_value))
+    else:
+        exit(nagios.OK, "%s < %s" % (j[options.field_name], options.warn_field_value))
+
+"""
+A timestamp age checker.  Similar to the threshold checker, but wraps
+some timestamp math for you.  Can parse either secs or milis since
+epoch. Same cascading as threshold, fall through from crit -> warn ->
+ok or unkown if something isn't a number.
+"""
+def check_timestamp(options, j):
+    print "Checking threshold..."
+    current_ts = time.time()
+    if not str(j[options.field_name]).isdigit() or float(j[options.field_name]) < 0:
+        exit(nagios.unknown, "Field '%s' has non-timestamp value '%s'" % (options.field_name, j[options.field_name]))
+
+    if (options.crit_field_value is None or not options.crit_field_value.isdigit()) \
+            and (options.warn_field_value is None or not options.warn_field_value.isdigit()):
+        exit(nagios.unknown, "Non-numeric or empty values entered for critical='%s' and warn='%s' checks, can't do threshold check." % (options.crit_field_value, options.warn_field_value))
+
+    returned_ts = float(j[options.field_name])
+
+    #if timestamp is in ms, bump it down to secs
+    if (returned_ts / 1000000000) >= 1000:
+        returned_ts = returned_ts / 1000
+
+    time_diff_secs = current_ts - returned_ts
+    if time_diff_secs < 0:
+        exit(nagios.unknown, "%s ?? %s" % (j[options.field_name], current_ts))
+    if options.crit_field_value is not None \
+            and options.crit_field_value.isdigit() \
+            and time_diff_secs >= float(options.crit_field_value):
+        exit(nagios.critical, "%s >= %s" % (time_diff_secs, options.crit_field_value))
+    elif options.warn_field_value is not None \
+            and options.warn_field_value.isdigit() \
+            and time_diff_secs >= float(options.warn_field_value):
+        exit(nagios.warning, "%s >= %s" % (time_diff_secs, options.warn_field_value))
+    else:
+        exit(nagios.ok, "%s < %s" % (time_diff_secs, options.warn_field_value))
 
 parser = OptionParser(usage='usage: %prog field_name expected_value uri')
 parser.add_option("--ssl",
@@ -106,6 +206,12 @@ parser.add_option("-t", "--timeout",
                   help="The maximum number of secs to wait for a response.",
                   dest="timeout",
                   default=10)
+parser.add_option("-T","--type",
+                  metavar="VALUETYPE",
+                  help="The type (threshold,string,boolean)",
+                  dest="value_type",
+                  default="string")
+
 options, args = parser.parse_args()
 
 
@@ -126,7 +232,6 @@ if not options.use_ssl:
 exit_code = None
 exit_message = None
 
-
 #Nested try/except inside a try/finally for python 2.4 compatibility, I'm sorry.
 try:
     try:
@@ -143,18 +248,22 @@ try:
         exit_message = 'timeout in %s seconds trying to retrieve url: "%s"' % (options.timeout, uri)
 finally:
     signal.alarm(0) # disable alarm
-    
+
 if exit_code is not None:
     exit(exit_code, exit_message)
 
 if options.field_name not in j:
-    exit(nagios.unknown, 'field: ' + field + ' not present')
+    exit(nagios.unknown, "Field: '%s' not present" % options.field_name)
 
-if options.crit_field_value is not None and j[options.field_name] == options.crit_field_value:
-    exit(nagios.critical, j[options.field_name] + ' == ' + options.crit_field_value)
-elif options.warn_field_value is not None and j[options.field_name] == options.warn_field_value:
-    exit(nagios.warning, j[options.field_name] + ' == ' + options.warn_field_value)
-elif options.ok_field_value is not None and j[options.field_name] == options.ok_field_value:
-    exit(nagios.ok, j[options.field_name] + ' == ' + options.ok_field_value)
+value_type = options.value_type.strip().lower()
+print "Checking %s as a %s value" % (options.field_name, value_type)
+if value_type == "string":
+    check_string(options, j)
+elif value_type == "threshold":
+    check_threshold(options, j)
+elif value_type == "bool":
+    check_boolean(options, j)
+elif value_type == "timestamp":
+    check_timestamp(options, j)
 
-exit(nagios.unknown, 'field: ' + options.field_name + ' has no value to match against.')
+exit(nagios.unknown, "I don't know how to check a '%s' value!" % value_type)
