@@ -159,7 +159,22 @@ def check_timestamp(options, j):
     else:
         exit(nagios.ok, "%s < %s" % (time_diff_secs, options.warn_field_value))
 
-parser = OptionParser(usage='usage: %prog field_name expected_value uri')
+parser = OptionParser(usage="""usage: 
+A threshold check with a warn limit of 100 and critical limit of 300:
+%prog --ssl -H <hostname> -p <port> -u "/path/to/json?args=args" -Tthreshold -f "someCounter" -w100 -c300
+
+A timestamp age check with a warn limit of 30 seconds and critical limit of 600 seconds:
+%prog --ssl -H <hostname> -p <port> -u "/path/to/json?args=args" -Ttimestamp -f "someTimestamp" -w30 -c600
+
+A positive boolean check ("OK" value is case insensitive for booleans):
+%prog --ssl -H <hostname> -p <port> -u "/path/to/json?args=args" -Tbool -f "someTimestamp" -vtrue
+
+A negative boolean check ("OK" value is case insensitive for booleans):
+%prog --ssl -H <hostname> -p <port> -u "/path/to/json?args=args" -Tbool -f "someTimestamp" -vFALSE
+
+A string match check with ok, warn and critical values:
+%prog --ssl -H <hostname> -p <port> -u "/path/to/json?args=args" -Tstring -f "someTimestamp" -vgreen -wyellow -cred
+""")
 parser.add_option("--ssl",
                   metavar="SSL",
                   help="Use SSL as the protocol",
