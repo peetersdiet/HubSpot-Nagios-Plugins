@@ -36,6 +36,7 @@ import signal
 import simplejson
 import sys
 import time
+import base64
 from optparse import OptionParser
 
 
@@ -226,6 +227,16 @@ parser.add_option("-T","--type",
                   help="The type (threshold,string,boolean)",
                   dest="value_type",
                   default="string")
+parser.add_option("--user",
+                  metavar="HTTPUSER",
+                  help="The username for HTTP Basic Authentication.",
+                  dest="http_basic_auth_user",
+                  default=None)
+parser.add_option("--pass",
+                  metavar="HTTPPASS",
+                  help="The password for HTTP Basic Authentication.",
+                  dest="http_basic_auth_pass",
+                  default=None)
 
 options, args = parser.parse_args()
 
@@ -251,7 +262,11 @@ exit_message = None
 try:
     try:
         signal.alarm(int(options.timeout)) # raise alarm in X seconds, this is a hack for python 2.5's lack of support for timeout in urlopen :(
-        j = simplejson.load(urllib2.urlopen(uri))
+        request = urllib2.Request(uri)
+        if options.http_basic_auth_user is not None:
+            base64string = base64.encodestring("%s:%s" % (options.http_basic_auth_user, options.http_basic_auth_pass)).replace('\n', '')
+            request.add_header("Authorization", "Basic %s" % base64string)
+        j = simplejson.load(urllib2.urlopen(request))
     except urllib2.HTTPError, ex:
         exit_code = nagios.unknown
         exit_message = 'unable to retrieve url: "%s"' % uri
